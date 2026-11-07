@@ -15,6 +15,8 @@ and in under a second Cushion shows:
 
 A plain-English summary sits at the top. It is written by Gemini when a key is available, and by a template otherwise.
 
+![Customer 20854 after a job loss plus a 15% bill increase](docs/1-customer-and-shock.png)
+
 ## Key finding: higher earners are the most fragile
 
 Apply the same layoff to everyone (EI at 55% of usual income for 6 months). In the **top income decile, 76% of
@@ -51,6 +53,13 @@ python -m pytest -q
 
 Per-account stats are precomputed into `data/cache/stats.parquet` and `data/cache/monthly.parquet` (committed, about 4 MB).
 To rebuild them from the CSVs, run `python -m cushion.data` (takes under a second). `transactions.csv` is not used.
+
+### Deploy free on Streamlit Community Cloud
+
+1. Go to https://share.streamlit.io and sign in with GitHub.
+2. Click **Create app** → **Deploy a public app from GitHub**. Then set the repo to `Shayan-2/cushion`, the branch to `main`, and the main file to `app.py`.
+3. Under **Advanced settings**, choose Python **3.12** and paste `GEMINI_API_KEY = "your-key"` into **Secrets**. The key is optional.
+4. Click **Deploy**. The precomputed cache is in the repo, so the first load takes a few seconds.
 
 ## How every number is calculated
 
