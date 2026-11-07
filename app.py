@@ -215,9 +215,10 @@ with c3:
         ok, head, sub = runway_number(base.runway) >= 6, "No shock applied", "Pick a shock in the sidebar."
     elif res.makes_it:
         ok, head = True, f"✅ Makes it through the {shock.duration}-month shock"
-        sub = (f"Money lasts {format_runway(res.runway).lower()}"
-               + (f", with ${max(res.buffer_left - res.gap * shock.duration, 0):,.0f} left at the end"
-                  if res.gap > 0 else ""))
+        sub = ((f"Money lasts {format_runway(res.runway).lower()}, with "
+                f"${max(res.buffer_left - res.gap * shock.duration, 0):,.0f} left at the end")
+               if res.gap > 0 else
+               f"Income still covers spending; ${res.buffer_left:,.0f} of savings left after any one-off cost")
     elif r_after <= 0:
         ok, head = False, "⚠️ No cushion: short from day one"
         sub = no_buffer_reason() if profile.B <= 0 else (
@@ -267,7 +268,8 @@ with t1:
                 help="Median of money_out across all months")
     m[2].metric("Savings buffer (B)", f"${profile.B:,.0f}", border=True,
                 help="Mean of avg_daily_balance over the last 6 months")
-    m[3].metric("Runway today", format_runway(base.runway), border=True,
+    m[3].metric("Runway today", "No shortfall" if isinstance(base.runway, str) else format_runway(base.runway),
+                border=True,
                 help="Buffer ÷ (spending − income). 'No shortfall' when income covers spending.")
     m = st.columns(4)
     m[0].metric("Fixed costs (F)", f"${profile.F:,.0f}", border=True,

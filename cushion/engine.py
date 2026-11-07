@@ -42,7 +42,7 @@ def runway_number(r: float | str) -> float:
 
 def format_runway(r: float | str) -> str:
     if isinstance(r, str):
-        return "No shortfall (120+ months)"
+        return "No shortfall (120+)"
     if r >= RUNWAY_CAP:
         return "120+ months"
     return f"{r:.1f} months"

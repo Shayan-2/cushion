@@ -110,12 +110,16 @@ def backup_plan(p: Profile, shock: Shock, res: ShockResult) -> BackupPlan:
             runway(p.B, one_off, spending, income), spending - income))
 
     # 3. Pause the loan payment
-    if p.P > 0:
-        spending -= p.P
-        steps.append(BackupStep(
-            "Ask the lender for a payment pause",
-            f"Loan payment of ${p.P:,.0f}/month deferred while the shock lasts",
-            runway(p.B, one_off, spending, income), spending - income))
+    # Only count the part of P that actually shows up in typical spending (F - H covers
+    # insurance + loan payments). A loan in arrears may not be getting paid at all.
+    paid = min(p.P, max(p.F - p.H, 0.0))
+    if paid > 0:
+        spending -= paid
+        detail = f"Loan payment of ${paid:,.0f}/month deferred while the shock lasts"
+        if paid < p.P - 1:
+            detail += f" (only ${paid:,.0f} of the ${p.P:,.0f} payment shows up in their spending)"
+        steps.append(BackupStep("Ask the lender for a payment pause", detail,
+                                runway(p.B, one_off, spending, income), spending - income))
 
     # 4. Negotiate the bill increase back down
     if shock.bills_up > 0 and p.H > 0:
