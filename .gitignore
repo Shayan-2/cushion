@@ -1,0 +1,15 @@
+# Over GitHub's 100 MB limit; the app does not need it
+data/transactions.csv
+# Secrets
+.env
+.streamlit/secrets.toml
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+env/
+# Large or local caches (the small precomputed parquet files in data/cache ARE committed)
+*.log
+.DS_Store
