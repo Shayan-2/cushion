@@ -20,7 +20,7 @@ st.markdown("""
 .block-container {padding-top: 1.6rem; padding-bottom: 2rem; max-width: 1400px;}
 [data-testid="stMetricValue"] {font-size: 2.1rem;}
 [data-testid="stMetricLabel"] p {font-size: 1.0rem;}
-.big-card {border-radius: 14px; padding: 18px 22px; border: 1px solid #e3e2de; background: #fcfcfb;}
+.big-card {min-height: 150px; border-radius: 14px; padding: 18px 22px; border: 1px solid #e3e2de; background: #fcfcfb;}
 .big-card .lbl {font-size: 1.05rem; color: #52514e; margin-bottom: 2px;}
 .big-card .val {font-size: 2.6rem; font-weight: 700; color: #0b0b0b; line-height: 1.15;}
 .big-card .sub {font-size: 0.95rem; color: #52514e;}
@@ -66,7 +66,7 @@ SAMPLES = {
 # ---------------- session defaults ----------------
 DEFAULTS = dict(acct_text=str(SAMPLES["Tight month to month"]), job_loss=True, ei_pct=55, bills_pct=0,
                 oneoff_months=0.0, oneoff_dollars=0, duration=6, ei_cap=False,
-                preset="Laid off (EI 55%, 6 mo)", mode="Bank customer",
+                preset="Laid off: EI 55% for 6 months", mode="Bank customer",
                 m_income=7500, m_spend=7400, m_bills=1500, m_savings=22000)
 for k, v in DEFAULTS.items():
     st.session_state.setdefault(k, v)
@@ -98,9 +98,8 @@ with st.sidebar:
         st.text_input("Account ID", key="acct_text", placeholder="e.g. 20854",
                       help="Any account_id from the bank data (4,500 customers).")
         st.caption("Sample customers")
-        cols = st.columns(2)
-        for i, (label, aid) in enumerate(SAMPLES.items()):
-            cols[i % 2].button(label, key=f"s_{aid}", on_click=set_account, args=(aid,), width="stretch")
+        for label, aid in SAMPLES.items():
+            st.button(f"{label} · {aid}", key=f"s_{aid}", on_click=set_account, args=(aid,), width="stretch")
     else:
         st.slider("Monthly income ($)", 0, 40000, step=100, key="m_income")
         st.slider("Monthly spending ($)", 0, 40000, step=100, key="m_spend")
@@ -111,9 +110,8 @@ with st.sidebar:
 
     st.divider()
     st.markdown("**2 · Pick a shock**")
-    pcols = st.columns(2)
     for i, name in enumerate(PRESETS):
-        pcols[i % 2].button(name, key=f"p_{i}", on_click=set_preset, args=(name,), width="stretch",
+        st.button(name, key=f"p_{i}", on_click=set_preset, args=(name,), width="stretch",
                             type="primary" if st.session_state.preset == name else "secondary")
     with st.expander("Adjust the shock size", expanded=True):
         st.toggle("Job loss (income replaced by EI)", key="job_loss", on_change=mark_custom)
@@ -161,6 +159,10 @@ base = apply_shock(profile, NO_SHOCK)
 res = apply_shock(profile, shock)
 pv = peer_view(stats, edges, profile, shock)
 row = stats.loc[profile.account_id] if profile.account_id is not None else None
+
+
+def sentence(t: str) -> str:
+    return t[:1].upper() + t[1:]
 
 
 def shock_text(s: Shock, p: Profile) -> str:
@@ -216,6 +218,10 @@ with c3:
         sub = (f"Money lasts {format_runway(res.runway).lower()}"
                + (f", with ${max(res.buffer_left - res.gap * shock.duration, 0):,.0f} left at the end"
                   if res.gap > 0 else ""))
+    elif r_after <= 0:
+        ok, head = False, "⚠️ No cushion: short from day one"
+        sub = no_buffer_reason() if profile.B <= 0 else (
+            f"The ${res.one_off:,.0f} surprise cost is more than the ${profile.B:,.0f} buffer.")
     else:
         ok = False
         head = f"⚠️ Runs out {shock.duration - r_after:.1f} months early"
@@ -235,7 +241,9 @@ facts = {
     "cover_months": round(min(pv.cover_months, 120), 1),
     "shock": shock_text(shock, profile), "duration": shock.duration,
     "runway_before": base.runway, "runway_after": res.runway, "makes_it": bool(res.makes_it),
-    "next_step": (f"{bp.steps[1].action.lower()} ({bp.steps[1].detail.lower()}), which stretches the runway to "
+    "next_step": (f"{bp.steps[1].action.lower()}, which cuts the monthly shortfall to ${max(bp.steps[1].gap, 0):,.0f}"
+                  if profile.B <= 0 else
+                  f"{bp.steps[1].action.lower()}, which stretches the runway to "
                   f"{format_runway(bp.steps[1].runway).lower()}") if (len(bp.steps) > 1 and shocked and not res.makes_it)
                  else (f"save ${gp.monthly_save:,.0f}/month toward a 3-month emergency fund of ${gp.target:,.0f}"
                        if gp.gap > 0 and gp.monthly_save > 0 else "keep the buffer in a separate savings account and "
@@ -267,7 +275,7 @@ with t1:
     m[1].metric("Household bills (H)", f"${profile.H:,.0f}", border=True, help="Median of household_bills")
     m[2].metric("Loan payment (P)", f"${profile.P:,.0f}", border=True,
                 help="Monthly payment if the loan is still running at end of 2025 (status C or D)")
-    m[3].metric("Months of spending saved", f"{min(pv.cover_months, 120):.1f}", border=True,
+    m[3].metric("Months of spending saved", f"{max(min(pv.cover_months, 120), 0):.1f}", border=True,
                 help="Buffer ÷ typical spending: how long savings last with zero income")
 
     notes = []
@@ -293,7 +301,7 @@ with t1:
         b.plotly_chart(charts.balance_history(hist, profile.B), config={"displayModeBar": False})
 
 with t2:
-    st.markdown(f"**Shock:** {shock_text(shock, profile).capitalize()}" + (f" · lasting {shock.duration} months"
+    st.markdown(f"**Shock:** {sentence(shock_text(shock, profile))}" + (f" · lasting {shock.duration} months"
                                                                            if shocked else ""))
     tbl = pd.DataFrame({
         "": ["Monthly income", "Monthly spending", "Monthly shortfall (gap)", "One-off cost",
@@ -339,13 +347,18 @@ with t3:
                           help="Shocked income + buffer left ÷ shock length")
             else:
                 st.warning(no_buffer_reason())
-            st.markdown("**Actions, in order** (runway after each one, cumulative):")
+            no_buffer = profile.B <= 0
+            st.markdown("**Actions, in order** (" + ("monthly shortfall" if no_buffer else "runway")
+                        + " after each one, cumulative):")
             for i, s in enumerate(bp.steps[1:], 1):
-                st.markdown(f"{i}. **{s.action}**: {s.detail} → **{format_runway(s.runway)}**")
+                result = (("closes the gap" if s.gap <= 0 else f"${s.gap:,.0f}/month short") if no_buffer
+                          else format_runway(s.runway))
+                st.markdown(f"{i}. **{s.action}**: {s.detail} → **{result}**")
             if shock.job_loss:
                 st.markdown(f"{len(bp.steps)}. **Apply for EI right away**: apply within 4 weeks of the last "
                             "day of work so benefits aren't delayed.")
-            st.plotly_chart(charts.backup_steps(bp.steps, shock.duration), config={"displayModeBar": False})
+            st.plotly_chart(charts.backup_gap(bp.steps) if no_buffer else charts.backup_steps(bp.steps, shock.duration),
+                            config={"displayModeBar": False})
 
 with t4:
     st.markdown(f"Similar customers = the **{pv.n} customers in income band {pv.band} of 10** ({pv.label}).")
@@ -359,10 +372,11 @@ with t4:
                 border=True, help=f"Peer median ${pv.medians['S']:,.0f}")
     k[2].metric("Buffer", f"${profile.B:,.0f}", fmt_diff(pv.buffer_diff_pct), border=True,
                 help=f"Peer median ${pv.medians['B']:,.0f}")
-    k[3].metric("Runway rank after shock" if shocked else "Runway rank",
-                f"Top {100 - (pv.after_rank if shocked else pv.before_rank):.0f}%",
+    k[3].metric("Longer runway than",
+                f"{(pv.after_rank if shocked else pv.before_rank):.0f}% of peers",
                 (f"{pv.after_rank - pv.before_rank:+.0f} pts vs before" if shocked else None), border=True,
-                help="Share of similar customers with a longer runway (smaller = safer)")
+                help="Share of similar customers whose runway is shorter than this customer's. Peers get the "
+                     "same shock.")
     a, b = st.columns([1, 1.2])
     a.plotly_chart(charts.shares(pv.shares), config={"displayModeBar": False})
     b.plotly_chart(charts.runway_position(pv.peers_before, pv.peers_after, runway_number(base.runway),

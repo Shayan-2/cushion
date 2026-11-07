@@ -44,7 +44,7 @@ def format_runway(r: float | str) -> str:
     if isinstance(r, str):
         return "No shortfall (120+ months)"
     if r >= RUNWAY_CAP:
-        return "120+ months (cap)"
+        return "120+ months"
     return f"{r:.1f} months"
 
 
@@ -138,11 +138,11 @@ def runway_vector(B, S, H, I, shock: Shock) -> np.ndarray:
 NO_SHOCK = Shock()
 PRESETS: dict[str, Shock] = {
     "No shock": NO_SHOCK,
-    "Laid off (EI 55%, 6 mo)": Shock(job_loss=True, ei_rate=0.55, duration=6),
-    "Furnace dies (1 month of spending)": Shock(one_off_months=1.0),
+    "Laid off: EI 55% for 6 months": Shock(job_loss=True, ei_rate=0.55, duration=6),
+    "Furnace dies: 1 month of spending": Shock(one_off_months=1.0),
     "Job loss + bills up 15%": Shock(job_loss=True, ei_rate=0.55, bills_up=0.15, duration=6),
-    "Rent/bills up 15%": Shock(bills_up=0.15),
-    "Perfect storm (job loss + bills 15% + repair)": Shock(job_loss=True, ei_rate=0.55, bills_up=0.15,
+    "Rent and bills up 15%": Shock(bills_up=0.15),
+    "Perfect storm: all three": Shock(job_loss=True, ei_rate=0.55, bills_up=0.15,
                                                            one_off_months=1.0, duration=6),
 }
 

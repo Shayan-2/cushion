@@ -48,13 +48,23 @@ def template_summary(f: dict) -> str:
     cover_txt = "almost no savings to fall back on" if cover < 0.5 else \
         f"savings that would cover about {cover:.1f} months of your usual spending"
     s1 = f"You {comp}, with {cover_txt}."
+    before, after = f["runway_before"], f["runway_after"]
     if f["shock"] == "none":
-        s2 = f"Right now your money would last {_runway_words(f['runway_before'])}."
+        s2 = ("Right now your income covers your spending, so your savings are not being drawn down."
+              if isinstance(before, str) else
+              ("Right now there is no savings buffer, so any shortfall hits immediately." if before <= 0
+               else f"Right now your savings would last {_runway_words(before)}."))
+    elif not isinstance(after, str) and after <= 0:
+        s2 = (f"With {f['shock']}, there is no savings buffer left to absorb it, so you would not get "
+              f"through the {f['duration']}-month window.")
+    elif isinstance(after, str):
+        s2 = (f"Even with {f['shock']}, your income still covers your spending, "
+              f"so you get through the {f['duration']}-month window.")
     else:
-        s2 = (f"With {f['shock']}, your buffer lasts {_runway_words(f['runway_after'])} "
-              f"(before: {_runway_words(f['runway_before'])}), "
-              + ("so you get through the "
-                 if f["makes_it"] else "so you would not get through the ")
+        s2 = (f"With {f['shock']}, your savings last {_runway_words(after)} "
+              + ("(before: no monthly shortfall), " if isinstance(before, str)
+                 else f"(before: {_runway_words(before)}), ")
+              + ("so you get through the " if f["makes_it"] else "so you would not get through the ")
               + f"{f['duration']}-month window.")
     s3 = f"Next step: {f['next_step']}."
     return " ".join([s1, s2, s3])

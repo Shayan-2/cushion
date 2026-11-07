@@ -58,8 +58,8 @@ def goal_plan(p: Profile, target_months: int = 3) -> GoalPlan:
     if save > 0:
         steps.append(f"Set an automatic transfer of ${save:,.0f} on payday, funded by {source}.")
         steps.append(f"At that pace you reach the goal in {_months(gap, save)}.")
-        first = min(p.S, gap)
-        steps.append(f"First milestone: one extra month of spending (${first:,.0f}) in {_months(first, save)}.")
+        if gap > p.S > 0:
+            steps.append(f"First milestone: one extra month of spending (${p.S:,.0f}) in {_months(p.S, save)}.")
     else:
         steps.append("There is no surplus and no flexible spending to trim: start with a small fixed "
                      "amount (e.g. $50/month) and review fixed costs and bills.")
@@ -73,6 +73,7 @@ class BackupStep:
     action: str
     detail: str
     runway: float | str
+    gap: float = 0.0   # monthly shortfall after this step (spending - income)
 
 
 @dataclass
@@ -85,7 +86,7 @@ class BackupPlan:
 
 def backup_plan(p: Profile, shock: Shock, res: ShockResult) -> BackupPlan:
     """Ordered actions, each with the runway you'd have after doing it and all steps before it."""
-    steps = [BackupStep("Do nothing", "Shocked numbers as they stand", res.runway)]
+    steps = [BackupStep("Do nothing", "Shocked numbers as they stand", res.runway, res.gap)]
     income, spending, one_off = res.income, res.spending, res.one_off
 
     # 1. Spread a big one-off over instalments (protects the buffer)
@@ -94,18 +95,19 @@ def backup_plan(p: Profile, shock: Shock, res: ShockResult) -> BackupPlan:
         one_off, spending = 0.0, spending + monthly
         steps.append(BackupStep(
             "Spread the surprise bill",
-            f"Ask for a {SPREAD_MONTHS}-month payment plan: ${monthly:,.0f}/month instead of "
-            f"${res.one_off:,.0f} up front",
-            runway(p.B, one_off, spending, income)))
+            (f"Ask for a {SPREAD_MONTHS}-month payment plan: ${monthly:,.0f}/month instead of "
+             f"${res.one_off:,.0f} up front")
+            + (" (there are no savings to pay it, so it adds to the monthly shortfall)" if p.B <= 0 else ""),
+            runway(p.B, one_off, spending, income), spending - income))
 
     # 2. Cut flexible spending
     cut = FLEX_TRIM_CRISIS * p.flexible
     if cut > 0:
         spending -= cut
         steps.append(BackupStep(
-            "Cut flexible spending 25%",
-            f"Cash, card and other transfers: -${cut:,.0f}/month",
-            runway(p.B, one_off, spending, income)))
+            f"Cut flexible spending by ${cut:,.0f}/month",
+            f"25% less on cash, card and other transfers (flexible spending is ${p.flexible:,.0f}/month)",
+            runway(p.B, one_off, spending, income), spending - income))
 
     # 3. Pause the loan payment
     if p.P > 0:
@@ -113,7 +115,7 @@ def backup_plan(p: Profile, shock: Shock, res: ShockResult) -> BackupPlan:
         steps.append(BackupStep(
             "Ask the lender for a payment pause",
             f"Loan payment of ${p.P:,.0f}/month deferred while the shock lasts",
-            runway(p.B, one_off, spending, income)))
+            runway(p.B, one_off, spending, income), spending - income))
 
     # 4. Negotiate the bill increase back down
     if shock.bills_up > 0 and p.H > 0:
@@ -122,7 +124,7 @@ def backup_plan(p: Profile, shock: Shock, res: ShockResult) -> BackupPlan:
         steps.append(BackupStep(
             "Negotiate or switch providers",
             f"Win back half the bill increase: -${saved:,.0f}/month",
-            runway(p.B, one_off, spending, income)))
+            runway(p.B, one_off, spending, income), spending - income))
 
     # Survival budget: spend at most this per month to last the whole shock window
     left = p.B - res.one_off

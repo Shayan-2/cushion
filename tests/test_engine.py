@@ -58,7 +58,7 @@ def test_no_shock_is_baseline():
 
 
 def test_job_loss_ei_55():
-    r = apply_shock(P0, PRESETS["Laid off (EI 55%, 6 mo)"])
+    r = apply_shock(P0, PRESETS["Laid off: EI 55% for 6 months"])
     assert r.income == pytest.approx(0.55 * 5000)
     assert r.spending == 4000
     # 12000 / (4000 - 2750) = 9.6
@@ -67,13 +67,13 @@ def test_job_loss_ei_55():
 
 
 def test_bills_up_15():
-    r = apply_shock(P0, PRESETS["Rent/bills up 15%"])
+    r = apply_shock(P0, PRESETS["Rent and bills up 15%"])
     assert r.spending == pytest.approx(4000 + 0.15 * 1000)
     assert r.runway == NO_SHORTFALL  # still earns more than spends
 
 
 def test_furnace_one_month_of_spending():
-    r = apply_shock(P0, PRESETS["Furnace dies (1 month of spending)"])
+    r = apply_shock(P0, PRESETS["Furnace dies: 1 month of spending"])
     assert r.one_off == 4000
     assert r.buffer_left == 8000
     assert r.runway == NO_SHORTFALL
@@ -92,7 +92,7 @@ def test_job_loss_plus_bills_mix():
 
 
 def test_perfect_storm():
-    r = apply_shock(P0, PRESETS["Perfect storm (job loss + bills 15% + repair)"])
+    r = apply_shock(P0, PRESETS["Perfect storm: all three"])
     # left 8000, gap 1400 -> 5.714 -> 5.7, fails the 6-month horizon
     assert r.runway == 5.7
     assert not r.makes_it
@@ -186,3 +186,16 @@ def test_income_bands_equal_size_and_manual_lookup():
     assert band_for_income(0, edges) == 1
     assert band_for_income(5000, edges) == 6
     assert band_for_income(1e9, edges) == 10
+
+
+# ---------- summary fallback ----------
+def test_template_summary_never_needs_api(monkeypatch):
+    from cushion.summary import summarize
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    facts = {"bills_vs_peers_pct": 12, "spending_vs_peers_pct": 3, "cover_months": 2.0,
+             "shock": "a job loss with EI paying 55% of income", "duration": 6,
+             "runway_before": NO_SHORTFALL, "runway_after": 4.2, "makes_it": False,
+             "next_step": "cut flexible spending by $300/month"}
+    text, src = summarize(facts)
+    assert src == "template"
+    assert "12% more on household bills" in text and "4.2 months" in text and "would not get through" in text

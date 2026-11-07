@@ -60,25 +60,28 @@ def balance_history(m: pd.DataFrame, B: float) -> go.Figure:
 
 def projection(p: Profile, before: ShockResult, after: ShockResult, duration: int) -> go.Figure:
     horizon = int(max(12, duration + 6))
-    t = np.arange(0, horizon + 1)
+    t = np.linspace(0, horizon, horizon * 10 + 1)
     fig = go.Figure()
     for res, name, color, dash in [(before, "Before the shock", GRAY, "dash"),
                                    (after, "After the shock", ORANGE, "solid")]:
         bal = np.maximum(res.buffer_left - res.gap * t, 0)
         fig.add_scatter(x=t, y=bal, name=name, mode="lines", line=dict(color=color, width=3, dash=dash),
-                        hovertemplate="Month %{x}<br>$%{y:,.0f}<extra>" + name + "</extra>")
+                        hovertemplate="Month %{x:.1f}<br>$%{y:,.0f}<extra>" + name + "</extra>")
     r = runway_number(after.runway)
     if r < horizon:
         fig.add_scatter(x=[r], y=[0], mode="markers+text", marker=dict(size=14, color=ORANGE,
                         line=dict(color="white", width=2)), text=[f"Runs out: month {r:.1f}"],
-                        textposition="top right", textfont=dict(size=15, color=INK), showlegend=False,
+                        textposition="top center", textfont=dict(size=15, color=INK), showlegend=False,
                         hoverinfo="skip")
     fig.add_vline(x=duration, line=dict(color=MUTED, dash="dot", width=2),
                   annotation_text=f"Shock window: {duration} months", annotation_position="top",
                   annotation_font=dict(size=14, color=MUTED))
     fig.update_xaxes(title="Months from today", dtick=2)
     fig.update_yaxes(tickprefix="$", tickformat=",.0f", rangemode="tozero")
-    return _layout(fig, "Savings left, month by month", height=380, hovermode="x unified")
+    fig = _layout(fig, "Savings left, month by month", height=400, hovermode="x unified")
+    fig.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.22, xanchor="left", x=0),
+                      margin=dict(b=40))
+    return fig
 
 
 def shares(df: pd.DataFrame) -> go.Figure:
@@ -131,6 +134,21 @@ def backup_steps(steps, duration: int) -> go.Figure:
                   annotation_font=dict(size=14, color=MUTED))
     fig.update_xaxes(title="Months of runway (chart capped at 36)", range=[0, 40])
     return _layout(fig, "Each step stretches the runway", height=90 + 55 * len(steps), showlegend=False)
+
+
+def backup_gap(steps) -> go.Figure:
+    """For customers with no buffer: how each step shrinks the monthly shortfall."""
+    labels = [s.action for s in steps][::-1]
+    vals = [s.gap for s in steps][::-1]
+    text = [f"${v:,.0f}/mo short" if v > 0 else "Gap closed" for v in vals]
+    colors = [ORANGE if i == len(steps) - 1 else BLUE for i in range(len(steps))]
+    fig = go.Figure(go.Bar(y=labels, x=[max(v, 0) for v in vals], orientation="h", text=text,
+                           textposition="outside", marker=dict(color=colors, cornerradius=4),
+                           textfont=dict(color=INK), hovertemplate="%{y}<br>%{text}<extra></extra>"))
+    fig.update_xaxes(title="Monthly shortfall ($)", tickprefix="$", tickformat=",.0f",
+                     range=[0, max(max(vals), 1) * 1.6])
+    return _layout(fig, "Monthly shortfall after each step", height=90 + 55 * len(steps),
+                   showlegend=False)
 
 
 def finding_chart(t: pd.DataFrame) -> go.Figure:
