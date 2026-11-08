@@ -34,7 +34,7 @@ def test_no_shock_drops_after_fields():
 
 def test_special_runways_are_words():
     f = s.llm_facts({**FACTS, "runway_before": "no shortfall (120+)", "runway_after": 0.0})
-    assert f["today, without the shock, savings would last"].startswith("no monthly shortfall")
+    assert f["how long savings last today"].startswith("no monthly shortfall")
     assert f["with the shock, savings last"].startswith("0 months")
 
 

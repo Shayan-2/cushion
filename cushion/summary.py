@@ -7,14 +7,15 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
 import threading
 import time
 
-# Tried in order. Larger Flash models (3.7, 3.8) were timing out server-side in Nov 2026 tests,
-# and 3.5/3.6 Flash took 6-8 s; the Lite models answer in 2-4 s.
-GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite")
-TIMEOUT_S = 6        # per model
+# Asked at the same time; the first valid answer wins. In Nov 2026 tests the larger Flash models
+# (3.7, 3.8) timed out server-side and 3.5/3.6 Flash took 6-8 s. The Lite models usually answer
+# in about 2 s, but either one occasionally takes 10 s or more.
+GEMINI_MODELS = ("gemini-3.5-flash-lite", "gemini-3.1-flash-lite")
 TOTAL_BUDGET_S = 8   # worst case the page waits this long before using the template
 
 SYSTEM = (
@@ -94,6 +95,8 @@ def _vs_peers(diff) -> str | None:
         return None
     if abs(diff) < 3:
         return "about the same as similar customers"
+    if diff <= -99:
+        return "almost nothing, far below similar customers"
     return f"{abs(diff):.0f}% {'more' if diff > 0 else 'less'} than similar customers"
 
 
@@ -107,13 +110,15 @@ def llm_facts(f: dict) -> dict:
         "their everyday spending is": _vs_peers(f.get("spending_vs_peers_pct")),
         "their savings cover": f"{(f['cover_months'] if f['cover_months'] > 0 else 0.0):.1f} months of usual spending",
         "the shock": f["shock"],
-        "today, without the shock, savings would last": _runway_fact(f["runway_before"]),
+        "how long savings last today": _runway_fact(f["runway_before"]),
         "with the shock, savings last": _runway_fact(f["runway_after"]),
-        f"do they get through the {d}-month shock window": "yes" if f["makes_it"] else "no",
+        "outcome": (f"they get through the {d}-month shock window" if f["makes_it"]
+                    else f"they do not get through the {d}-month shock window"),
         "next step": f["next_step"],
     }
     if f["shock"] == "none":
-        for k in ("with the shock, savings last", f"do they get through the {d}-month shock window"):
+        out["the shock"] = "no shock applied: describe how long their savings last today instead"
+        for k in ("with the shock, savings last", "outcome"):
             out.pop(k)
     return {k: v for k, v in out.items() if v is not None}
 
@@ -155,30 +160,40 @@ def gemini_summary(f: dict) -> str | None:
 
 
 def _ask_gemini(key: str, facts: dict) -> str | None:
+    """Ask every model at once and keep the first answer that passes looks_ok.
+    Response times vary a lot from call to call, so racing beats waiting on one model."""
     try:
         from google import genai
         client = genai.Client(api_key=key)
     except Exception:
         return None
     prompt = "Customer facts (CAD):\n" + json.dumps(facts, indent=1, ensure_ascii=False)
-    deadline = time.monotonic() + TOTAL_BUDGET_S
-    for model in GEMINI_MODELS:
-        left = deadline - time.monotonic()
-        if left < 1.5:
-            break
+    answers: queue.Queue = queue.Queue()
+
+    def ask(model: str) -> None:
         try:
             interaction = client.interactions.create(
                 model=model,
                 system_instruction=SYSTEM,
                 input=prompt,
                 generation_config={"thinking_level": "low", "max_output_tokens": 2048},
-                timeout=min(TIMEOUT_S, left),
+                timeout=TOTAL_BUDGET_S,
             )
             text = " ".join((getattr(interaction, "output_text", None) or "").split())
-            if looks_ok(text, facts):
-                return text
+            answers.put(text if looks_ok(text, facts) else None)
         except Exception:
-            continue
+            answers.put(None)
+
+    for model in GEMINI_MODELS:
+        threading.Thread(target=ask, args=(model,), daemon=True).start()
+    deadline = time.monotonic() + TOTAL_BUDGET_S
+    for _ in GEMINI_MODELS:
+        try:
+            text = answers.get(timeout=max(deadline - time.monotonic(), 0))
+        except queue.Empty:
+            return None
+        if text:
+            return text
     return None
 
 

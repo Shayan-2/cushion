@@ -11,7 +11,7 @@ from cushion.engine import (
 )
 from cushion.peers import finding_table, peer_view
 from cushion.plans import backup_plan, goal_plan
-from cushion.summary import summarize
+from cushion.summary import gemini_summary, template_summary
 
 st.set_page_config(page_title="Cushion", page_icon="🛟", layout="wide")
 
@@ -49,8 +49,21 @@ def get_finding():
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
+def _cached_gemini(facts_items: tuple) -> str:
+    text = gemini_summary(dict(facts_items))
+    if not text:
+        raise RuntimeError("no AI summary")  # exceptions aren't cached, so the next run retries
+    return text
+
+
 def cached_summary(facts_items: tuple, use_ai: bool):
-    return summarize(dict(facts_items), use_ai)
+    """Cache only successful Gemini answers; a slow or failed call falls back to the template."""
+    if use_ai:
+        try:
+            return _cached_gemini(facts_items), "Gemini"
+        except Exception:
+            pass
+    return template_summary(dict(facts_items)), "template"
 
 
 stats, monthly, edges = get_data()
