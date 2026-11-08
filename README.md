@@ -44,7 +44,7 @@ streamlit run app.py
 Optional AI summary: set `GEMINI_API_KEY` in your environment (or in `.streamlit/secrets.toml`, which is git-ignored).
 Without a key, or with no internet or an API error, the app uses the template summary automatically.
 
-Tests (102 total: runway and shock unit tests, plans, and a headless run of the whole app for 10 accounts × 6 presets):
+Tests (113 total: runway and shock unit tests, plans, summary guards, and a headless run of the whole app for 10 accounts × 6 presets):
 
 ```bash
 pip install -r requirements-dev.txt
@@ -110,9 +110,14 @@ For a customer with no buffer, the plan shows how each step shrinks the monthly 
 - their share of spending by category against the peer median share
 - their runway rank among peers, before and after the same shock.
 
-**AI summary:** Gemini (`gemini-3.8-flash`, Interactions API, low thinking) receives only about a dozen summary numbers:
-income, spending, bills, buffer, peer differences, runway before and after, the shock and the top plan step.
-It never receives the account ID or any transactions. The template fallback is always computed first.
+**AI summary:** Gemini (`gemini-3.1-flash-lite`, falling back to `gemini-3.5-flash-lite`; Interactions API, low thinking)
+receives only about ten summary facts, written as plain phrases ("28% more than similar customers") so it can't flip a sign:
+income, spending, peer differences, months of savings, runway before and after, the shock and the top plan step.
+It never receives the account ID or any transactions. Guards:
+- **Hard 8-second limit.** After that, the page uses the template. The client's own timeout can retry or hang, so the call runs in a background thread.
+- **Checked output.** Text is rejected if it contains any number that wasn't in the facts, or if it looks cut off.
+- **Model choice.** The larger Flash models (3.7, 3.8) timed out in testing, and 3.5/3.6 Flash took 6–8 s. The Lite models answer in about 2–4 s.
+- **Tests never call the API.** A fixture blocks the call even when a key is present in the environment or in `.streamlit/secrets.toml`.
 
 ## Data, credits and limits
 

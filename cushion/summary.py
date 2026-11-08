@@ -7,18 +7,27 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import threading
+import time
 
-GEMINI_MODEL = "gemini-3.8-flash"
-TIMEOUT_S = 8
+# Tried in order. Larger Flash models (3.7, 3.8) were timing out server-side in Nov 2026 tests,
+# and 3.5/3.6 Flash took 6-8 s; the Lite models answer in 2-4 s.
+GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite")
+TIMEOUT_S = 6        # per model
+TOTAL_BUDGET_S = 8   # worst case the page waits this long before using the template
 
 SYSTEM = (
     "You are Cushion, a friendly financial resilience coach at a Canadian bank. "
-    "Write a summary of 2 or 3 short sentences (max 70 words) for a non-expert customer. "
-    "Use ONLY the numbers in the JSON you are given, rounded as shown; never invent numbers. "
-    "Sentence 1: how the customer compares to similar customers (bills or spending, and how many "
-    "months their savings cover). Sentence 2: what the shock does to their runway and whether they "
-    "make it through the shock window. Sentence 3: the single most useful next step from the plan. "
-    "Plain English, no jargon, no markdown, no greetings, dollars in CAD."
+    "Write a summary of 2 or 3 short sentences (max 70 words) for a non-expert customer, "
+    "speaking to them as 'you'. "
+    "Use ONLY the facts you are given, copying numbers and the words 'more'/'less' exactly; "
+    "never invent or recompute numbers. "
+    "Sentence 1: how the customer compares to similar customers, and how many months their savings cover. "
+    "Sentence 2: what the shock does to how long their savings last, and whether they get through the "
+    "shock window. Sentence 3: the single next step, as given. "
+    "Write natural sentences in plain English; do not repeat the fact labels word for word. "
+    "No jargon, no markdown, no greetings."
 )
 
 
@@ -70,6 +79,58 @@ def template_summary(f: dict) -> str:
     return " ".join([s1, s2, s3])
 
 
+def _runway_fact(r) -> str:
+    if isinstance(r, str):
+        return "no monthly shortfall (income covers spending)"
+    if r <= 0:
+        return "0 months (no savings left to draw on)"
+    if r >= 120:
+        return "10+ years"
+    return f"{r:.1f} months"
+
+
+def _vs_peers(diff) -> str | None:
+    if diff is None:
+        return None
+    if abs(diff) < 3:
+        return "about the same as similar customers"
+    return f"{abs(diff):.0f}% {'more' if diff > 0 else 'less'} than similar customers"
+
+
+def llm_facts(f: dict) -> dict:
+    """The facts as unambiguous phrases, so the model can't flip a sign or misread a field."""
+    d = f["duration"]
+    out = {
+        "monthly income": f"${f['monthly_income']:,.0f}",
+        "monthly spending": f"${f['monthly_spending']:,.0f}",
+        "their household bills are": _vs_peers(f.get("bills_vs_peers_pct")),
+        "their everyday spending is": _vs_peers(f.get("spending_vs_peers_pct")),
+        "their savings cover": f"{(f['cover_months'] if f['cover_months'] > 0 else 0.0):.1f} months of usual spending",
+        "the shock": f["shock"],
+        "today, without the shock, savings would last": _runway_fact(f["runway_before"]),
+        "with the shock, savings last": _runway_fact(f["runway_after"]),
+        f"do they get through the {d}-month shock window": "yes" if f["makes_it"] else "no",
+        "next step": f["next_step"],
+    }
+    if f["shock"] == "none":
+        for k in ("with the shock, savings last", f"do they get through the {d}-month shock window"):
+            out.pop(k)
+    return {k: v for k, v in out.items() if v is not None}
+
+
+def _numbers(s: str) -> set[str]:
+    return {n.replace(",", "").rstrip(".") for n in re.findall(r"\d[\d,]*\.?\d*", s)}
+
+
+def looks_ok(text: str, facts: dict) -> bool:
+    """Reject output that is cut off or contains a number we did not give the model."""
+    if not text or len(text) < 40 or text[-1] not in ".!" or len(text.split()) > 110:
+        return False
+    allowed = _numbers(json.dumps(facts, ensure_ascii=False))
+    allowed |= {n.split(".")[0] for n in allowed} | {"3", "6", "10", "0"}
+    return _numbers(text) <= allowed
+
+
 def gemini_summary(f: dict) -> str | None:
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
@@ -81,19 +142,44 @@ def gemini_summary(f: dict) -> str | None:
     if not key:
         return None
     try:
-        from google import genai
-        client = genai.Client(api_key=key)
-        interaction = client.interactions.create(
-            model=GEMINI_MODEL,
-            system_instruction=SYSTEM,
-            input="Customer numbers (CAD):\n" + json.dumps(f),
-            generation_config={"thinking_level": "low", "max_output_tokens": 1024},
-            timeout=TIMEOUT_S,
-        )
-        text = (getattr(interaction, "output_text", None) or "").strip()
-        return text or None
+        facts = llm_facts(f)
     except Exception:
         return None
+    # The client's own timeout is not a hard limit (it can retry or hang), so the call runs in a
+    # background thread and we stop waiting after TOTAL_BUDGET_S no matter what.
+    box: list[str | None] = [None]
+    worker = threading.Thread(target=lambda: box.__setitem__(0, _ask_gemini(key, facts)), daemon=True)
+    worker.start()
+    worker.join(TOTAL_BUDGET_S)
+    return None if worker.is_alive() else box[0]
+
+
+def _ask_gemini(key: str, facts: dict) -> str | None:
+    try:
+        from google import genai
+        client = genai.Client(api_key=key)
+    except Exception:
+        return None
+    prompt = "Customer facts (CAD):\n" + json.dumps(facts, indent=1, ensure_ascii=False)
+    deadline = time.monotonic() + TOTAL_BUDGET_S
+    for model in GEMINI_MODELS:
+        left = deadline - time.monotonic()
+        if left < 1.5:
+            break
+        try:
+            interaction = client.interactions.create(
+                model=model,
+                system_instruction=SYSTEM,
+                input=prompt,
+                generation_config={"thinking_level": "low", "max_output_tokens": 2048},
+                timeout=min(TIMEOUT_S, left),
+            )
+            text = " ".join((getattr(interaction, "output_text", None) or "").split())
+            if looks_ok(text, facts):
+                return text
+        except Exception:
+            continue
+    return None
 
 
 def summarize(f: dict, use_ai: bool = True) -> tuple[str, str]:

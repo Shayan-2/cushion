@@ -277,7 +277,7 @@ with t1:
     m[1].metric("Household bills (H)", f"${profile.H:,.0f}", border=True, help="Median of household_bills")
     m[2].metric("Loan payment (P)", f"${profile.P:,.0f}", border=True,
                 help="Monthly payment if the loan is still running at end of 2025 (status C or D)")
-    m[3].metric("Months of spending saved", f"{max(min(pv.cover_months, 120), 0):.1f}", border=True,
+    m[3].metric("Months of spending saved", f"{max(min(pv.cover_months, 120), 0) + 0.0:.1f}", border=True,
                 help="Buffer ÷ typical spending: how long savings last with zero income")
 
     notes = []
